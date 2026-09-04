@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trust, Verified — Notes on ePassport PKI and Adversarial AI Evolution</title>
+<meta name="description" content="Notes on ICAO ePassport PKI verification tooling and IAEL, a provable adversarial-AI evaluation harness, by Elias (Eginn) Chen.">
+<style>
+  :root {
+    --bg: #fbfaf8;
+    --text: #1c1c1c;
+    --muted: #5a5a5a;
+    --accent: #8a3b2f;
+    --rule: #e2ddd4;
+    --code-bg: #f0ede6;
+    --link: #7a3226;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Georgia, "Songti SC", serif;
+    line-height: 1.7;
+  }
+  .wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 4rem 1.5rem 6rem;
+  }
+  header.page-head {
+    margin-bottom: 3rem;
+  }
+  .kicker {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.72rem;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 0.9rem;
+  }
+  h1 {
+    font-size: 2rem;
+    line-height: 1.25;
+    margin: 0 0 1rem;
+    letter-spacing: -0.01em;
+  }
+  .byline {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 0.95rem;
+    color: var(--muted);
+  }
+  .byline a { color: var(--link); }
+  .dek {
+    font-size: 1.12rem;
+    color: var(--muted);
+    margin: 1.6rem 0 0;
+  }
+  h2 {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 1.05rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--accent);
+    border-top: 1px solid var(--rule);
+    padding-top: 2.2rem;
+    margin: 3.2rem 0 1.2rem;
+  }
+  p { margin: 1.1rem 0; }
+  ul { margin: 1.1rem 0; padding-left: 1.3rem; }
+  li { margin: 0.5rem 0; }
+  a { color: var(--link); text-decoration-color: rgba(122,50,38,0.35); }
+  a:hover { text-decoration-color: var(--link); }
+  code {
+    background: var(--code-bg);
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+  }
+  strong { font-weight: 650; }
+  .sig {
+    margin-top: 3rem;
+    color: var(--muted);
+    font-style: italic;
+  }
+  footer.page-foot {
+    margin-top: 4rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--rule);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  footer.page-foot a { color: var(--muted); }
+  @media (max-width: 480px) {
+    .wrap { padding: 2.5rem 1.2rem 4rem; }
+    h1 { font-size: 1.6rem; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="page-head">
+  <div class="kicker">Field Notes</div>
+  <h1>Trust, Verified: Notes on ePassport PKI and Adversarial AI Evolution</h1>
+  <p class="dek">When a system claims something is valid — a passport chip, a model's win in a competitive evaluation — how do you actually confirm that, rather than just accept the claim?</p>
+  <p class="byline">By <strong>Elias (Eginn) Chen</strong> — Independent Security Researcher, <a href="https://viatreebot.com" target="_blank" rel="noopener">VIATREE</a></p>
+</header>
+
+<p>Two research threads this year kept circling the same underlying question. Below are notes on both, at the level of architecture and findings rather than implementation. The first is shipped and open source; the second is mid-development.</p>
+
+<h2>Part 1 — What Actually Makes a Passport Chip Trustworthy</h2>
+
+<p>An electronic passport (eMRTD) under ICAO Doc 9303 isn't verified by one check — it's a stack of them, each answering a different question:</p>
+
+<ul>
+  <li><strong>BAC / PACE</strong> establish a secure channel to the chip, so the data in transit can't be read or altered by a third party.</li>
+  <li><strong>Active Authentication (AA)</strong> and <strong>Chip Authentication (CA)</strong> prove the chip itself is genuine — that its private key wasn't cloned onto a different, forged chip.</li>
+  <li><strong>Passive Authentication (PA)</strong> proves the <em>data</em> on the chip — the biographic details, the photo — hasn't been altered since the issuing country signed it.</li>
+</ul>
+
+<p>PA is the one that interests me most, because it's the only step that doesn't terminate at the chip. It terminates at a certificate chain: the chip's data was signed by a Document Signer certificate, which was in turn signed by that country's <strong>CSCA (Country Signing Certificate Authority)</strong>. If you don't have a correct, current copy of the world's CSCA certificates, PA can fail in two different and equally bad ways — it can reject a genuine document because you're missing the issuing country's root, or it can silently accept a forged one because nothing in your trust store was positioned to catch it. Either failure mode is invisible from the outside; the verifier just reports "pass" or "fail" with no indication of <em>which</em> kind of wrong it might be.</p>
+
+<p>That's the gap <a href="https://github.com/Eginn-33/csca-masterlist-tools" target="_blank" rel="noopener"><code>csca-masterlist-tools</code></a> exists to close on the tooling side. It's an open-source (MIT) parser for the national CSCA Master List format used under ICAO 9303 — built against the German BSI's published Master List, which bundles the CSCA certificates of every participating country into a single signed CMS/PKCS#7 structure. The parser extracts and validates the chain for each entry, exports a clean PEM bundle plus a TSV manifest for downstream tooling, and falls back to OpenSSL for the small number of certificates that fail strict ASN.1 parsers — older CSCAs occasionally have field encodings that technically violate the spec but that real-world verifiers still have to handle, because rejecting them outright means rejecting genuine passports from that country. The current run against the BSI list extracts 588 CSCA certificates across 114 countries.</p>
+
+<p>The other half of this work is diagnosing what happens when this stack fails in practice, not just in theory. Working across both a commercial mobile SDK and open-source validators, I've been cataloguing the concrete failure modes behind the generic <code>AA_Failed</code> / <code>CA_Failed</code> error codes these tools surface — because "authentication failed" is not actionable on its own, and the same error code covers everything from "this document is genuinely forged" to "your trust store is out of date" to "the chip's antenna had a bad read." Distinguishing those cases is what a real verifier — as opposed to a demo — has to get right.</p>
+
+<p>That research is also what sits behind <strong>ICAO ePassport Inspector</strong>, an iOS app I built and shipped (<a href="https://epassport-web.vercel.app" target="_blank" rel="noopener">support &amp; privacy site</a>) that runs the full check — MRZ OCR, a BAC/PACE secure channel over CoreNFC, and Passive Authentication against ICAO PKD Master List trust anchors — entirely on-device, with no server calls. The verification logic that reads and writes to the chip itself is not open source; the trust-anchor tooling that makes the verification meaningful is.</p>
+
+<h2>Part 2 — Provable Adversarial Evolution</h2>
+
+<p><a href="https://github.com/Eginn-33" target="_blank" rel="noopener">IAEL</a> <em>(profile — implementation not yet public)</em> is a red/blue-team research harness for AI models, currently in Phase 2. The starting complaint it's trying to answer: in most adversarial-AI writeups, "our model won" is a claim the same team that built the model is also the one reporting. That's not a technical flaw, exactly, but it means the result can't really be audited by anyone outside the project.</p>
+
+<p>The architecture: two attacker models compete head-to-head against a shared vulnerable target environment. The winner of that match has its weights frozen and becomes the new baseline — the "champion." A separate defender model then has to survive repeated attacks <em>from that frozen champion specifically</em>, and it only improves by actually being hit and adapting, not by self-assessment. Champions accumulate this way, each one having actually beaten the previous lineage rather than being declared the winner by whoever ran the experiment.</p>
+
+<p>The part I care most about architecturally is that the win/loss determination isn't made by either competing model, and isn't self-reported by the research pipeline either — it's made by a separate evaluation harness, and every run is anchored with cryptographic evidence: event root hashes, environment state diffs, and locally signed, frozen manifests for the winning run. The intent is that the champion lineage is something a third party could, in principle, audit and confirm, rather than something they have to take on trust from a README.</p>
+
+<p>IAEL is still mid-development and running locally against open-weight models; I'm not open-sourcing the implementation yet, but I'm glad to go deeper on the architecture and the evaluation-harness design with anyone working on adversarial ML evaluation or automated red-teaming.</p>
+
+<h2>The Common Thread</h2>
+
+<p>Both projects are really about the same discipline: don't assume a trust chain holds — build the thing that lets you actually check. For passports, that means having the real CSCA data and knowing precisely how verification fails, not just that it did. For adversarial AI evaluation, that means making the "winner" a claim a third party could re-derive, not a claim the winning team gets to make about itself.</p>
+
+<p>If you're working in document security, applied PKI, or AI safety evaluation and want to compare notes, my inbox is open.</p>
+
+<p class="sig">— Eginn</p>
+
+<footer class="page-foot">
+  <p><a href="https://github.com/Eginn-33" target="_blank" rel="noopener">GitHub</a> · <a href="https://viatreebot.com" target="_blank" rel="noopener">VIATREE</a></p>
+</footer>
+
+</div>
+</body>
+</html>
